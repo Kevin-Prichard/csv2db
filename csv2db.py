@@ -36,10 +36,9 @@ def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
         description = 'CSV Schema Generator:'
                       'extracts the top -n rows from .CSV files in a .ZIP archive.')
     parser.add_argument('--zip', '-z', dest='zip_file', type=str, action='store')
-    parser.add_argument('--dir', '-d', dest='output_dir', type=str, action='store')
-    parser.add_argument('--limit', '-l', dest='max_csv_files', default=0, type=int, action='store', nargs='?')
-    parser.add_argument('--max', '-n', dest='max_csv_rows', default=0, type=int, action='store', nargs='?')
     parser.add_argument('--sqlite', '-s', dest='sqlite_db_file', type=str, action='store')
+    parser.add_argument('--filter', '-f', dest='name_filter', type=str, action='store')
+    parser.add_argument('--max', '-n', dest='max_csv_rows', default=0, type=int, action='store', nargs='?')
     return parser.parse_args(argv), parser
 
 
@@ -49,7 +48,7 @@ def get_table_lengths(table_len_csv_fh):
     return {row[0]: int(row[1]) for row in rdr}
 
 
-def zip_walker(zip_filename, name_filter_rx: re.Pattern=None,
+def zip_walker(zip_filename, name_filter: re.Pattern=None,
                max_rows=None, output_fn=None):
     with zipfile.ZipFile(zip_filename, "r") as zip:
         zip_name = os.path.basename(zip_filename)
@@ -58,7 +57,7 @@ def zip_walker(zip_filename, name_filter_rx: re.Pattern=None,
         table_lengths = get_table_lengths(zip.open(table_lengths_filename))
         table_sql = dict()
         for file_no, name in enumerate(zip.namelist()):
-            if name_filter_rx and not name_filter_rx.match(name):
+            if name_filter and not name_filter.match(name):
                 continue
             table_name = name.split(".")[0]
             # if table_name not in ('acquisition_samples', 'fndds_derivation'):
@@ -182,9 +181,15 @@ def main(argv=None):
     create_fn = None
     if args.sqlite_db_file:
         create_fn = partial(create_import_sqlite, args.sqlite_db_file)
+    if args.name_filter:
+        name_filter = re.compile(args.name_filter, re.I)
     if args.zip_file:
-        zip_walker(args.zip_file, args.output_dir, args.max_csv_files,
-                   args.max_csv_rows, create_fn)
+        zip_walker(
+            zip_filename=args.zip_file,
+            name_filter=name_filter,
+            max_rows=args.max_csv_rows,
+            output_fn=create_fn,
+        )
     else:
         parser.print_help()
 
