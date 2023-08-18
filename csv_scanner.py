@@ -1,8 +1,10 @@
-import csv
 from collections import defaultdict as dd
+import csv
+import io
 import logging
 import re
 import sys
+from typing import Callable, List
 
 std_err = sys.stderr
 
@@ -34,11 +36,57 @@ sql_type_conv = {
 }
 
 
+class TextIOStatsWrapper(io.TextIOWrapper):  # (RawIOWrapper):
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        self._char_num = 0
+        self._line_num = -1
+
+    def read(self, *args, **kw):
+        data = super().read(*args, **kw)
+        self._char_num += len(data)
+        return data  #.decode('utf-8')
+
+    def readline(self, limit=None):
+        data = super().readline(limit if limit is not None else -1)
+        self._char_num += len(data)
+        self._line_num += 1
+        return data  #.decode('utf-8')
+
+    def readlines(self, hint=-1) -> List[str]:
+        data = super().readlines(hint)
+        # for i, d in enumerate(data):
+        self._char_num += sum(len(d) for d in data)
+        self._line_num += len(data)
+        # data[i] = d  #.decode('utf-8')
+        return data
+
+    @property
+    def char_num(self):
+        return self._char_num
+
+    @property
+    def line_num(self):
+        return self._line_num
+
+
 class CSVScanner:
-    def __init__(self, csv_fh, table_name, table_lengths, max_rows=None):
+    def __init__(self, csv_fh,
+                 table_name: str,
+                 file_len: int = None,
+                 max_rows: int = None,
+                 report_cb: Callable = None,
+                 report_cb_freq: float = None  # n>1 every n rows; 0<n<1 every n % chars
+                 ):
         self._csv_fh = csv_fh
         self._table_name = table_name
-        self._table_lengths = table_lengths
+        self._file_len = file_len
+        self._report_cb = report_cb
+        self._report_cb_freq = report_cb_freq
+        self._report_cb_type = None
+        if report_cb_freq is not None:
+            self._report_cb_type = 'pct' if 0<report_cb_freq<1 else 'cnt'
+            self._report_cb_freq = report_cb_freq * 100
         self._stats = dd(lambda: dd(int))
         self._str_max_len = dd(int)
         self._max_rows = max_rows
@@ -46,19 +94,22 @@ class CSVScanner:
     def destroy(self):
         self._csv_fh.close()
         del self._table_name
+        del self._file_len
         del self._stats
         del self._str_max_len
         del self._csv_fh
-        del self._table_lengths
+        del self._report_cb
+        del self._report_cb_freq
         del self._max_rows
 
     def scan(self):
-        reader = csv.reader(self._csv_fh)
+        stats_reader = TextIOStatsWrapper(self._csv_fh)
+        reader = csv.reader(stats_reader)
         field_names = next(reader)
-        num_rows = min(self._max_rows, self._table_lengths[self._table_name]) \
-            if self._max_rows else self._table_lengths[self._table_name]
-        last_pct = -1
-        for row_num, row in enumerate(reader):
+        last_indication = -1
+        for row in reader:
+            row_num = stats_reader.line_num
+            rows_est = self._file_len / (stats_reader.char_num / row_num)
             for i, val in enumerate(row):
                 tx = type_rx.match(val)
                 types = {typ for typ, value in tx.groupdict().items()
@@ -71,13 +122,25 @@ class CSVScanner:
                 if the_type == 'str':
                     self._str_max_len[field_names[i]] = max(
                         self._str_max_len[field_names[i]], len(val))
-                if ((pct:=int(row_num / num_rows * 100)) > last_pct
-                        or row_num >= num_rows):
+                if (self._report_cb_type == 'pct' and
+                    (((pct := int(stats_reader.char_num / self._file_len * 100))
+                        > last_indication)
+                     or stats_reader.char_num >= self._file_len)):
                     std_err.write(
                         f"\r{self._table_name}: "
-                        f"{pct}% ({row_num:,} of {num_rows:,})")
-                    last_pct = pct
-            if row_num >= num_rows:
+                        f"{pct}% ({stats_reader.char_num:,}"
+                        f" of {self._file_len:,})")
+                    last_indication = pct
+                elif (self._report_cb_type == 'cnt' and (
+                  row_num > last_indication) or
+                      stats_reader.char_num >= self._file_len):
+                    std_err.write(
+                        f"\r{self._table_name}: "
+                        f"row {row_num:,}"
+                        f" of {rows_est:,}")
+                    last_indication = row_num
+
+            if row_num >= rows_est:
                 break
         std_err.write("\n")
 

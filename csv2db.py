@@ -9,11 +9,11 @@ from functools import partial
 from random import randint
 import re
 from shutil import which
+from subprocess import Popen, PIPE, run
 import sys
 import tempfile
-import zipfile
-from subprocess import Popen, PIPE, run
 from typing import Tuple, List
+import zipfile
 
 from csv_scanner import CSVScanner
 
@@ -51,31 +51,30 @@ def get_table_lengths(table_len_csv_fh):
 def zip_walker(zip_filename, name_filter: re.Pattern=None,
                max_rows=None, output_fn=None):
     with zipfile.ZipFile(zip_filename, "r") as zip:
-        zip_name = os.path.basename(zip_filename)
-        files_done = 0
-        table_lengths_filename = "all_downloaded_table_record_counts.csv"
-        table_lengths = get_table_lengths(zip.open(table_lengths_filename))
         table_sql = dict()
         for file_no, name in enumerate(zip.namelist()):
             if name_filter and not name_filter.match(name):
                 continue
             table_name = name.split(".")[0]
-            # if table_name not in ('acquisition_samples', 'fndds_derivation'):
-            #     continue
-            # if max_files and file_no >= max_files:
-            #     break
-            if CSV_EXT_RX.match(name) and name != table_lengths_filename:
-                with zip.open(name) as csv_file:
+            file_info = zip.getinfo(name)
+            if CSV_EXT_RX.match(name):  # and name != table_lengths_filename:
+                with zip.open(name) as csv_fh:
                     ss = CSVScanner(
-                        io.TextIOWrapper(csv_file, encoding='utf-8'),
+                        csv_fh,
                         table_name,
-                        table_lengths,
+                        file_len=file_info.file_size,
+                        report_cb=lambda s: print(f"Report cb: {s}"),
+                        report_cb_freq=0.01,
                         max_rows=max_rows,
                     )
                     ss.scan()
                 if output_fn:
-                    with zip.open(name) as csv_file:
-                        output_fn(ss, table_name, csv_file, file_info=zip.getinfo(name))
+                    with zip.open(name) as csv_fh:
+                        output_fn(
+                            scanner=ss,
+                            table_name=table_name,
+                            csv_fh=csv_fh,
+                            file_info=file_info)
                 else:
                     table_sql[table_name] = ss.sql_create_table()
     if not output_fn:
