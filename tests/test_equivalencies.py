@@ -36,7 +36,8 @@ class EquivalencyCases(TestCase):
     def test_that_zip_has_three_files(self):
         file_count = 0
 
-        def count_files(db_path, scanner: CSVScanner, table_name, csv_fh, file_info):
+        def count_files(db_path, scanner: CSVScanner,
+                        table_name, csv_fh, file_info):
             nonlocal file_count
             if table_name and csv_fh and file_info:
                 file_count += 1
@@ -53,7 +54,8 @@ class EquivalencyCases(TestCase):
 
     def test_that_zipped_csvs_have_expected_structure(self):
 
-        def check_structure(db_path, scanner: CSVScanner, table_name, csv_fh, file_info):
+        def check_structure(db_path, scanner: CSVScanner,
+                            table_name, csv_fh, file_info):
             struct = list(scanner.result())
             self.assertEqual(structures[table_name], struct)
 

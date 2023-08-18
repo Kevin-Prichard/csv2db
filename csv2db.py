@@ -17,7 +17,6 @@ import zipfile
 
 from csv_scanner import CSVScanner
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('csv2db')
 
@@ -33,12 +32,17 @@ class ArgumentParser(argparse.ArgumentParser):
 def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
     parser = ArgumentParser(
         prog='csv2db.py',
-        description = 'CSV Schema Generator:'
-                      'extracts the top -n rows from .CSV files in a .ZIP archive.')
-    parser.add_argument('--zip', '-z', dest='zip_file', type=str, action='store')
-    parser.add_argument('--sqlite', '-s', dest='sqlite_db_file', type=str, action='store')
-    parser.add_argument('--filter', '-f', dest='name_filter', type=str, action='store')
-    parser.add_argument('--max', '-n', dest='max_csv_rows', default=0, type=int, action='store', nargs='?')
+        description='CSV Schema Generator:'
+                    'extracts the top -n rows from .CSV files '
+                    'in a .ZIP archive.')
+    parser.add_argument('--zip', '-z', dest='zip_file', type=str,
+                        action='store')
+    parser.add_argument('--sqlite', '-s', dest='sqlite_db_file', type=str,
+                        action='store')
+    parser.add_argument('--filter', '-f', dest='name_filter', type=str,
+                        action='store')
+    parser.add_argument('--max', '-n', dest='max_csv_rows', default=0,
+                        type=int, action='store', nargs='?')
     return parser.parse_args(argv), parser
 
 
@@ -48,7 +52,7 @@ def get_table_lengths(table_len_csv_fh):
     return {row[0]: int(row[1]) for row in rdr}
 
 
-def zip_walker(zip_filename, name_filter: re.Pattern=None,
+def zip_walker(zip_filename, name_filter: re.Pattern = None,
                max_rows=None, output_fn=None):
     with zipfile.ZipFile(zip_filename, "r") as zip:
         table_sql = dict()
@@ -81,7 +85,8 @@ def zip_walker(zip_filename, name_filter: re.Pattern=None,
         return table_sql
 
 
-def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh, file_info):
+def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
+                         file_info):
     try:
         tmpdir = tempfile.mkdtemp()
         fifo_fname = os.path.join(
@@ -106,7 +111,7 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh, file_
             db_path,
             '>', '/tmp/sout.log',
             '2>', '/tmp/serr.log',
-            ], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        ], stdin=PIPE, stdout=PIPE, stderr=PIPE)
         logger.debug("sqlite3: start blocking pipe import %s", table_name)
 
         buf_size_power = 24  # 16MB
@@ -118,7 +123,7 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh, file_
 
                 try:
                     finished = transfer(
-                        fifo_fh, csv_fh, file_info, 2**buf_size_power)
+                        fifo_fh, csv_fh, file_info, 2 ** buf_size_power)
                     logger.info("Power that worked: %d", buf_size_power)
                     break
                 except BrokenPipeError as ee:
@@ -148,7 +153,8 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh, file_
         if fifo_fname:
             logger.info("create_import_sqlite: rm fifo_fname %s", fifo_fname)
             os.remove(fifo_fname)
-            logger.info("create_import_sqlite: rm fifo_fname %s done", fifo_fname)
+            logger.info("create_import_sqlite: rm fifo_fname %s done",
+                        fifo_fname)
         if tmpdir:
             logger.info("create_import_sqlite: rmdir tmpdir %s", tmpdir)
             os.rmdir(tmpdir)
