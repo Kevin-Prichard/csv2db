@@ -55,7 +55,7 @@ def zip_walker(zip_filename, name_filter: re.Pattern=None,
         for file_no, name in enumerate(zip.namelist()):
             if name_filter and not name_filter.match(name):
                 continue
-            table_name = name.split(".")[0]
+            table_name = os.path.basename(name).split(".")[0]
             file_info = zip.getinfo(name)
             if CSV_EXT_RX.match(name):  # and name != table_lengths_filename:
                 with zip.open(name) as csv_fh:
