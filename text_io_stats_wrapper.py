@@ -2,7 +2,7 @@ import io
 from typing import List
 
 
-class TextIOStatsWrapper(io.TextIOWrapper):  # (RawIOWrapper):
+class TextIOStatsWrapper(io.TextIOWrapper):
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         self._char_num = 0
@@ -11,6 +11,7 @@ class TextIOStatsWrapper(io.TextIOWrapper):  # (RawIOWrapper):
     def read(self, *args, **kw):
         data = super().read(*args, **kw)
         self._char_num += len(data)
+        self._line_num += data.count("\n")
         return data
 
     def readline(self, limit=None):

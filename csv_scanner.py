@@ -69,13 +69,9 @@ class CSVScanner:
         del self._max_rows
 
     def scan(self):
-        stats_reader = TextIOStatsWrapper(self._csv_fh)
-        reader = csv.reader(stats_reader)
+        reader = csv.reader(self._csv_fh)
         field_names = next(reader)
-        last_indication = -1
         for row in reader:
-            row_num = stats_reader.line_num
-            rows_est = self._file_len / (stats_reader.char_num / row_num)
             for i, val in enumerate(row):
                 tx = type_rx.match(val)
                 types = {typ for typ, value in tx.groupdict().items()
@@ -88,28 +84,6 @@ class CSVScanner:
                 if the_type == 'str':
                     self._str_max_len[field_names[i]] = max(
                         self._str_max_len[field_names[i]], len(val))
-                if (self._report_cb_type == 'pct' and
-                        (((pct := int(
-                            stats_reader.char_num / self._file_len * 100))
-                          > last_indication)
-                         or stats_reader.char_num >= self._file_len)):
-                    std_err.write(
-                        f"\r{self._table_name}: "
-                        f"{pct}% ({stats_reader.char_num:,}"
-                        f" of {self._file_len:,})")
-                    last_indication = pct
-                elif (self._report_cb_type == 'cnt' and (
-                        row_num > last_indication) or
-                      stats_reader.char_num >= self._file_len):
-                    std_err.write(
-                        f"\r{self._table_name}: "
-                        f"row {row_num:,}"
-                        f" of {rows_est:,}")
-                    last_indication = row_num
-
-            if row_num >= rows_est:
-                break
-        std_err.write("\n")
 
     def result(self):
         for field_name, typ in self._stats.items():

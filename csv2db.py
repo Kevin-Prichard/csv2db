@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import csv
-import io
 import logging
 import os
 from functools import partial
@@ -16,6 +14,7 @@ from typing import Tuple, List
 import zipfile
 
 from csv_scanner import CSVScanner
+from text_io_progress_wrapper import TextIOProgressWrapper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('csv2db')
@@ -46,12 +45,6 @@ def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
     return parser.parse_args(argv), parser
 
 
-def get_table_lengths(table_len_csv_fh):
-    rdr = csv.reader(io.TextIOWrapper(table_len_csv_fh, encoding='utf-8'))
-    next(rdr)
-    return {row[0]: int(row[1]) for row in rdr}
-
-
 def zip_walker(zip_filename, name_filter: re.Pattern = None,
                max_rows=None, output_fn=None):
     with zipfile.ZipFile(zip_filename, "r") as zip:
@@ -63,8 +56,9 @@ def zip_walker(zip_filename, name_filter: re.Pattern = None,
             file_info = zip.getinfo(name)
             if CSV_EXT_RX.match(name):  # and name != table_lengths_filename:
                 with zip.open(name) as csv_fh:
+                    progress_wrapper = TextIOProgressWrapper(csv_fh)
                     ss = CSVScanner(
-                        csv_fh,
+                        progress_wrapper,
                         table_name,
                         file_len=file_info.file_size,
                         report_cb=lambda s: print(f"Report cb: {s}"),
@@ -74,11 +68,18 @@ def zip_walker(zip_filename, name_filter: re.Pattern = None,
                     ss.scan()
                 if output_fn:
                     with zip.open(name) as csv_fh:
+                        progress_wrapper = TextIOProgressWrapper(
+                            csv_fh,
+                            object_name=name,
+                            every_pct=0.05,
+                            file_len=file_info.file_size,
+                        )
                         output_fn(
                             scanner=ss,
                             table_name=table_name,
-                            csv_fh=csv_fh,
-                            file_info=file_info)
+                            csv_fh=progress_wrapper,
+                            file_info=file_info,
+                        )
                 else:
                     table_sql[table_name] = ss.sql_create_table()
     if not output_fn:
@@ -172,7 +173,7 @@ def transfer(fifo_fh, csv_fh, file_info, buf_size):
             left -= can_do
             logger.info("  wrote %d bytes to fifo, left: %d", buf_size, left)
         except BrokenPipeError as bpe:
-            print("Failed on buf_size %d" % buf_size)
+            logger.exception("Failed on buf_size %d" % buf_size, bpe)
             raise bpe
 
         if left <= 0:
