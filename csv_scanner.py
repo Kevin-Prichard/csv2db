@@ -40,19 +40,10 @@ class CSVScanner:
                  table_name: str,
                  file_len: int = None,
                  max_rows: int = None,
-                 report_cb: Callable = None,
-                 # n>1 every n rows; 0<n<1 every n % chars
-                 report_cb_freq: float = None
                  ):
         self._csv_fh = csv_fh
         self._table_name = table_name
         self._file_len = file_len
-        self._report_cb = report_cb
-        self._report_cb_freq = report_cb_freq
-        self._report_cb_type = None
-        if report_cb_freq is not None:
-            self._report_cb_type = 'pct' if 0 < report_cb_freq < 1 else 'cnt'
-            self._report_cb_freq = report_cb_freq * 100
         self._stats = dd(lambda: dd(int))
         self._str_max_len = dd(int)
         self._max_rows = max_rows
@@ -64,8 +55,6 @@ class CSVScanner:
         del self._stats
         del self._str_max_len
         del self._csv_fh
-        del self._report_cb
-        del self._report_cb_freq
         del self._max_rows
 
     def scan(self):
@@ -94,7 +83,7 @@ class CSVScanner:
             if the_typ != 'str' and 'str' in typ_keys:
                 the_typ = 'str'  # str always wins, means impure vals exist
             if len(typ_keys) != 1:
-                std_err.write(
+                logger.warning(
                     "Got multiple types for %s.%s: %s (went with %s)\n" % (
                         self._table_name, field_name, str(typ), the_typ)
                 )

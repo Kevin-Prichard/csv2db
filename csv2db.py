@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 from functools import partial
+from io import TextIOWrapper
 from random import randint
 import re
 from shutil import which
@@ -15,11 +16,14 @@ import zipfile
 
 from csv_scanner import CSVScanner
 from text_io_progress_wrapper import TextIOProgressWrapper
+from bytes_io_progress_wrapper import BytesIOProgressWrapper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('csv2db')
 
 CSV_EXT_RX = re.compile(r'.*\.csv$')
+
+std_err = sys.stderr
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -42,46 +46,79 @@ def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
                         action='store')
     parser.add_argument('--max', '-n', dest='max_csv_rows', default=0,
                         type=int, action='store', nargs='?')
+    parser.add_argument(
+        '--progress-rows', '-r', dest='every_rows', default=None, type=int,
+        help='Show progress update every -r rows')
+    parser.add_argument(
+        '--progress-pct', '-p', dest='every_pct', default=None, type=float,
+        help='Show progress update every -p percent of a csv file')
     return parser.parse_args(argv), parser
 
 
-def zip_walker(zip_filename, name_filter: re.Pattern = None,
-               max_rows=None, output_fn=None):
+def zip_walker(zip_filename,
+               name_filter: re.Pattern = None,
+               max_rows=None,
+               output_fn=None,
+               every_rows=None,
+               every_pct=None,
+               ):
+
     with zipfile.ZipFile(zip_filename, "r") as zip:
         table_sql = dict()
+
         for file_no, name in enumerate(zip.namelist()):
             if name_filter and not name_filter.match(name):
                 continue
             table_name = os.path.basename(name).split(".")[0]
             file_info = zip.getinfo(name)
-            if CSV_EXT_RX.match(name):  # and name != table_lengths_filename:
+            file_len = file_info.file_size
+
+            if CSV_EXT_RX.match(name):
                 with zip.open(name) as csv_fh:
-                    progress_wrapper = TextIOProgressWrapper(csv_fh)
+                    if show_progress:=every_rows or every_pct:
+                        csv_fh = TextIOProgressWrapper(
+                            csv_fh,
+                            object_name=name,
+                            file_len=file_len,
+                            progress_fh=std_err,
+                            every_rows=every_rows,
+                            every_pct=every_pct,
+                        )
+                    else:
+                        csv_fh = TextIOWrapper(csv_fh)
+
                     ss = CSVScanner(
-                        progress_wrapper,
+                        csv_fh,
                         table_name,
-                        file_len=file_info.file_size,
-                        report_cb=lambda s: print(f"Report cb: {s}"),
-                        report_cb_freq=0.01,
+                        file_len=file_len,
                         max_rows=max_rows,
                     )
                     ss.scan()
+                    if show_progress:
+                        std_err.write("\n")
                 if output_fn:
                     with zip.open(name) as csv_fh:
-                        progress_wrapper = TextIOProgressWrapper(
-                            csv_fh,
-                            object_name=name,
-                            every_pct=0.05,
-                            file_len=file_info.file_size,
-                        )
+                        if show_progress := every_rows or every_pct:
+                            csv_fh = BytesIOProgressWrapper(
+                                source=csv_fh,
+                                object_name=name,
+                                every_rows=every_rows,
+                                every_pct=every_pct,
+                                progress_fh=std_err,
+                                file_len=file_len,
+                            )
+                        _ = csv_fh.readline()
                         output_fn(
                             scanner=ss,
                             table_name=table_name,
-                            csv_fh=progress_wrapper,
+                            csv_fh=csv_fh,
                             file_info=file_info,
                         )
+                        if show_progress:
+                            std_err.write("\n")
                 else:
                     table_sql[table_name] = ss.sql_create_table()
+
     if not output_fn:
         return table_sql
 
@@ -125,7 +162,7 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
                 try:
                     finished = transfer(
                         fifo_fh, csv_fh, file_info, 2 ** buf_size_power)
-                    logger.info("Power that worked: %d", buf_size_power)
+                    logger.debug("Power that worked: %d", buf_size_power)
                     break
                 except BrokenPipeError as ee:
                     logger.warning("Power that failed: %d; backing off by 1",
@@ -139,27 +176,31 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
         if csv_fh:
             csv_fh.close()
             del csv_fh
-        logger.info("create_import_sqlite: csv_fh close")
+        logger.debug("create_import_sqlite: csv_fh close")
 
         # Must always directly .quit sqlite3
         # otherwise it hangs around and interferes with subsequent imports
         if proc:
-            logger.info("create_import_sqlite: sqlite3 .quit/flush/close")
+            logger.debug("create_import_sqlite: sqlite3 .quit/flush/close")
             proc.stdin.write(b".quit\n")
-            proc.stdin.flush()
-            proc.stdin.close()
-            proc.wait()
-            logger.info("create_import_sqlite: sqlite3 .quit/flush/close done")
+            try:
+                proc.stdin.flush()
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            finally:
+                proc.wait()
+            logger.debug("create_import_sqlite: sqlite3 .quit/flush/close done")
 
         if fifo_fname:
-            logger.info("create_import_sqlite: rm fifo_fname %s", fifo_fname)
+            logger.debug("create_import_sqlite: rm fifo_fname %s", fifo_fname)
             os.remove(fifo_fname)
-            logger.info("create_import_sqlite: rm fifo_fname %s done",
+            logger.debug("create_import_sqlite: rm fifo_fname %s done",
                         fifo_fname)
         if tmpdir:
-            logger.info("create_import_sqlite: rmdir tmpdir %s", tmpdir)
+            logger.debug("create_import_sqlite: rmdir tmpdir %s", tmpdir)
             os.rmdir(tmpdir)
-            logger.info("create_import_sqlite: rmdir tmpdir %s done", tmpdir)
+            logger.debug("create_import_sqlite: rmdir tmpdir %s done", tmpdir)
 
 
 def transfer(fifo_fh, csv_fh, file_info, buf_size):
@@ -167,11 +208,14 @@ def transfer(fifo_fh, csv_fh, file_info, buf_size):
     while left > 0:
         can_do = min(left, buf_size)
         try:
-            logger.info("write %d bytes to fifo, left: %d", buf_size, left)
+            logger.debug("write %d bytes to fifo, left: %d", buf_size, left)
             fifo_fh.write(csv_fh.read(can_do))
             fifo_fh.flush()
             left -= can_do
-            logger.info("  wrote %d bytes to fifo, left: %d", buf_size, left)
+            logger.debug("  wrote %d bytes to fifo, left: %d", buf_size, left)
+        except Exception as e:
+            import pudb; pu.db
+            x = 1
         except BrokenPipeError as bpe:
             logger.exception("Failed on buf_size %d" % buf_size, bpe)
             raise bpe
@@ -195,13 +239,12 @@ def main(argv=None):
             name_filter=name_filter,
             max_rows=args.max_csv_rows,
             output_fn=create_fn,
+            every_rows=args.every_rows,
+            every_pct=args.every_pct,
         )
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    try:
-        main(sys.argv[1:])
-    except Exception as ee:
-        print(ee)
+    main(sys.argv[1:])
