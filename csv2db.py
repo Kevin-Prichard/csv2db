@@ -5,6 +5,7 @@ import logging
 import os
 from functools import partial
 from io import TextIOWrapper
+import pickle
 from random import randint
 import re
 from shutil import which
@@ -13,6 +14,7 @@ import sys
 import tempfile
 from typing import Tuple, List
 import zipfile
+from zipfile import ZipInfo
 
 from csv_scanner import CSVScanner
 from text_io_progress_wrapper import TextIOProgressWrapper
@@ -44,6 +46,18 @@ def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
                         action='store')
     parser.add_argument('--filter', '-f', dest='name_filter', type=str,
                         action='store')
+    parser.add_argument(
+        '--create-only', '-c', dest='create_only', action='store_const',
+        default=False, const=True,
+        help='Create tables in target db, then exit')
+    parser.add_argument(
+        '--show-struct', '-w', dest='show_struct', action='store_const',
+        default=False, const=True,
+        help='Show scan statistics & table structure then exit')
+    parser.add_argument(
+        '--save-struct', '-t', dest='save_struct', action='store',
+        default=None,
+        help='Filename to write scan statistics & table structure, then exit')
     parser.add_argument('--max', '-n', dest='max_csv_rows', default=0,
                         type=int, action='store', nargs='?')
     parser.add_argument(
@@ -59,12 +73,17 @@ def zip_walker(zip_filename,
                name_filter: re.Pattern = None,
                max_rows=None,
                output_fn=None,
+               create_only=False,
                every_rows=None,
                every_pct=None,
+               show_struct=False,
+               save_struct=None,
                ):
 
     with zipfile.ZipFile(zip_filename, "r") as zip:
         table_sql = dict()
+        if save_struct:
+            structs = {}
 
         for file_no, name in enumerate(zip.namelist()):
             if name_filter and not name_filter.match(name):
@@ -96,7 +115,23 @@ def zip_walker(zip_filename,
                     ss.scan()
                     if show_progress:
                         std_err.write("\n")
-                if output_fn:
+                if show_struct:
+                    buf = []
+                    for fname, stats in ss.stats.items():
+                        buf.append(
+                            f"    {fname}: "
+                            f"{', '.join([f'{typ}:{cnt}' for typ, cnt in stats.items()])}")
+                    print("Statistics\n", "\n".join(buf))
+                    print("Decision\n", list(ss.result()))
+                    print("Table structure\n", ss.sql_create_table())
+
+                if save_struct:
+                    structs[table_name] = {
+                        fname: f"{typ}{f'({var_size})' if var_size else ''}"
+                        for fname, typ, var_size in ss.result()
+                    }
+
+                if output_fn and not (show_struct or save_struct):
                     with zip.open(name) as csv_fh:
                         if show_progress := every_rows or every_pct:
                             csv_fh = BytesIOProgressWrapper(
@@ -108,23 +143,56 @@ def zip_walker(zip_filename,
                                 file_len=file_len,
                             )
                         _ = csv_fh.readline()
+
                         output_fn(
                             scanner=ss,
                             table_name=table_name,
                             csv_fh=csv_fh,
                             file_info=file_info,
+                            create_only=create_only,
                         )
                         if show_progress:
                             std_err.write("\n")
                 else:
                     table_sql[table_name] = ss.sql_create_table()
 
+    if save_struct:
+        with open(save_struct, "wb") as struct_fh:
+            a = pickle.dumps(structs)
+            struct_fh.write(a)
+
     if not output_fn:
         return table_sql
 
 
-def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
-                         file_info):
+def create_import_sqlite(
+        db_path, scanner: CSVScanner, table_name, csv_fh,
+        file_info: ZipInfo,
+        create_only: bool = False):
+    """
+    :param db_path:  - sqlite path
+    :param scanner:  - instance of CSVScanner
+    :param table_name:  - name of table we're creating
+    :param csv_fh:   - file handle of delimited data source
+    :param file_info:   - ZipInfo instance
+    :param create_only: - bool, only create tables, don't import
+    :return:
+
+    Must follow this order of operations:
+    Create FIFO path, create table, start import to table from FIFO, then push data down FIFO
+
+    Currently-
+    1. Create FIFO pathname using tempfile.mkdtenp and a random number
+    2. Create table in Sqlite db
+    3. Start sqlite import to table, piping input from FIFO, which blocks until...
+    4. Open the FIFO as a file
+    5. Read csv_fh and write it to FIFO, until complete
+    6. Send '.quit' to Sqlite3
+    7. Close 'proc' of Sqlite3
+    8. Close FIFO, csv_fh
+    """
+
+    proc, fifo_fname, tmpdir = None, None, None
     try:
         tmpdir = tempfile.mkdtemp()
         fifo_fname = os.path.join(
@@ -134,12 +202,15 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
     except OSError as e:
         logger.exception("Failed to create FIFO: %s", e)
     else:
-        x = run([
+        run([
             which("sqlite3"),
             '-cmd', scanner.sql_create_table_1line(),
             db_path
         ], stdin=PIPE, stdout=PIPE, stderr=PIPE, check=True)
-        logger.debug("sqlite3: create table %s", table_name)
+        logger.debug("sqlite3: created table %s", table_name)
+
+        if create_only:
+            return
 
         proc = Popen([
             which("sqlite3"),
@@ -196,7 +267,7 @@ def create_import_sqlite(db_path, scanner: CSVScanner, table_name, csv_fh,
             logger.debug("create_import_sqlite: rm fifo_fname %s", fifo_fname)
             os.remove(fifo_fname)
             logger.debug("create_import_sqlite: rm fifo_fname %s done",
-                        fifo_fname)
+                         fifo_fname)
         if tmpdir:
             logger.debug("create_import_sqlite: rmdir tmpdir %s", tmpdir)
             os.rmdir(tmpdir)
@@ -214,8 +285,8 @@ def transfer(fifo_fh, csv_fh, file_info, buf_size):
             left -= can_do
             logger.debug("  wrote %d bytes to fifo, left: %d", buf_size, left)
         except Exception as e:
-            import pudb; pu.db
-            x = 1
+            logger.exception("Failed on exception: %s", str(e), 3)
+            raise e
         except BrokenPipeError as bpe:
             logger.exception("Failed on buf_size %d" % buf_size, bpe)
             raise bpe
@@ -228,7 +299,7 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv
     args, parser = get_args(argv)
-    create_fn = None
+    create_fn, name_filter = None, None
     if args.sqlite_db_file:
         create_fn = partial(create_import_sqlite, args.sqlite_db_file)
     if args.name_filter:
@@ -237,6 +308,9 @@ def main(argv=None):
         zip_walker(
             zip_filename=args.zip_file,
             name_filter=name_filter,
+            create_only=args.create_only,
+            show_struct=args.show_struct,
+            save_struct=args.save_struct,
             max_rows=args.max_csv_rows,
             output_fn=create_fn,
             every_rows=args.every_rows,

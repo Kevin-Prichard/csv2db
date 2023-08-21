@@ -13,14 +13,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('csv_scanner')
 
 type_rx = re.compile(
-    r"^(?P<date>\d{4}[\-/]\d{2}[\-/]\d{2})"
-    r"|(?P<datetime>\d{4}[\-/]\d{2}[\-/]\d{2}.\d{2}:\d{2}:\d{2})"
-    r"|(?P<time>\d{2}:\d{2}:\d{2})"
-    r"|(?P<int>[\-+0-9]+)"
-    r"|(?P<decimal>[\-+]?[0-9]\.?[0-9]*)"
-    r"|(?P<bool>true|false)"
-    r"|(?P<none>None)"
-    r"|(?P<str>.*)$"
+    r"(?P<date>^\d{4}[\-/]\d{2}[\-/]\d{2}$)"
+    r"|(?P<datetime>^\d{4}[\-/]\d{2}[\-/]\d{2}.\d{2}:\d{2}:\d{2}$)"
+    r"|(?P<time>^\d{2}:\d{2}:\d{2}$)"
+    r"|(?P<int>^[\-+0-9]+$)"
+    r"|(?P<decimal>^[\-+]?[0-9]*\.?[0-9]*$)"
+    r"|(?P<bool>^true|false$)"
+    r"|(?P<none>^None$)"
+    r"|(?P<str>^.*$)"
 )
 
 sql_type_conv = {
@@ -28,7 +28,7 @@ sql_type_conv = {
     "datetime": "DATETIME",
     "time": "TIME",
     "int": "INTEGER",
-    "decimal": "REAL",
+    "decimal": "DOUBLE",
     "bool": "BOOLEAN",
     "none": "NULL",
     "str": "VARCHAR",
@@ -60,7 +60,9 @@ class CSVScanner:
     def scan(self):
         reader = csv.reader(self._csv_fh)
         field_names = next(reader)
-        for row in reader:
+        for row_num, row in enumerate(reader):
+            if row_num > self._max_rows:
+                break
             for i, val in enumerate(row):
                 tx = type_rx.match(val)
                 types = {typ for typ, value in tx.groupdict().items()
@@ -74,8 +76,13 @@ class CSVScanner:
                     self._str_max_len[field_names[i]] = max(
                         self._str_max_len[field_names[i]], len(val))
 
+    @property
+    def stats(self):
+        return {fname: dict(cnts.items())
+                for fname, cnts in self._stats.items()}
+
     def result(self):
-        for field_name, typ in self._stats.items():
+        for field_name, typ in self.stats.items():
             typ_keys = typ.keys()
             the_typ = list(typ_keys)[0] if len(typ_keys) == 1 \
                 else sorted(typ_keys, key=lambda key: typ[key], reverse=True)[
@@ -106,7 +113,8 @@ class CSVScanner:
         buffer = [f"CREATE TABLE {self._table_name} ("]
         field_defs = []
         for field_name, the_typ, str_len in self.result():
-            field_defs.append(f'{field_name} {sql_type_conv[the_typ]}'
+            fname = field_name.replace(' ', '_')
+            field_defs.append(f'{fname} {sql_type_conv[the_typ]}'
                               f'{f"({str(str_len)})" if str_len else ""}')
         buffer.append("    " + (",\n    ".join(field_defs)))
         buffer.append(');\n')
