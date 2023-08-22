@@ -26,17 +26,25 @@ There are many "csv2(sql|db|...)" projects, but this one is mine.
 ## Usage
 ```bash
 % ./csv2db.py --help
-usage: csv2db.py [-h] [--file FILE] [--dir OUTPUT_DIR] [--limit [MAX_CSV_FILES]] [--max [MAX_CSV_ROWS]] [--sqlite SQLITE_DB_FILE]
+usage: ./csv2db.py [-h] [--zip ZIP_FILE] [--sqlite SQLITE_DB_FILE] [--filter NAME_FILTER] [--create-only] [--show-struct] [--save-struct SAVE_STRUCT] [--max [MAX_CSV_ROWS]] [--progress-rows EVERY_ROWS]
+                   [--progress-pct EVERY_PCT]
 
 CSV Schema Generator:extracts the top -n rows from .CSV files in a .ZIP archive.
 
 optional arguments:
   -h, --help            show this help message and exit
-  --file FILE, -f FILE
-  --dir OUTPUT_DIR, -d OUTPUT_DIR
-  --limit [MAX_CSV_FILES], -l [MAX_CSV_FILES]
-  --max [MAX_CSV_ROWS], -n [MAX_CSV_ROWS]
+  --zip ZIP_FILE, -z ZIP_FILE
   --sqlite SQLITE_DB_FILE, -s SQLITE_DB_FILE
+  --filter NAME_FILTER, -f NAME_FILTER
+  --create-only, -c     Create tables in target db, then exit
+  --show-struct, -w     Show scan statistics & table structure then exit
+  --save-struct SAVE_STRUCT, -t SAVE_STRUCT
+                        Filename to write scan statistics & table structure, then exit
+  --max [MAX_CSV_ROWS], -n [MAX_CSV_ROWS]
+  --progress-rows EVERY_ROWS, -r EVERY_ROWS
+                        Show progress update every -r rows
+  --progress-pct EVERY_PCT, -p EVERY_PCT
+                        Show progress update every -p percent of a csv file
 ```
 
 ### Examples

@@ -36,7 +36,7 @@ class ArgumentParser(argparse.ArgumentParser):
 
 def get_args(argv: List[str]) -> Tuple[argparse.Namespace, ArgumentParser]:
     parser = ArgumentParser(
-        prog='csv2db.py',
+        prog='./csv2db.py',
         description='CSV Schema Generator:'
                     'extracts the top -n rows from .CSV files '
                     'in a .ZIP archive.')
