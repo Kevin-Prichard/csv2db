@@ -38,12 +38,10 @@ sql_type_conv = {
 class CSVScanner:
     def __init__(self, csv_fh,
                  table_name: str,
-                 file_len: int = None,
                  max_rows: int = None,
                  ):
         self._csv_fh = csv_fh
         self._table_name = table_name
-        self._file_len = file_len
         self._stats = dd(lambda: dd(int))
         self._str_max_len = dd(int)
         self._max_rows = max_rows
@@ -51,7 +49,6 @@ class CSVScanner:
     def destroy(self):
         self._csv_fh.close()
         del self._table_name
-        del self._file_len
         del self._stats
         del self._str_max_len
         del self._csv_fh

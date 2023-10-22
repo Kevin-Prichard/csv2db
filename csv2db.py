@@ -109,7 +109,6 @@ def zip_walker(zip_filename,
                     ss = CSVScanner(
                         csv_fh,
                         table_name,
-                        file_len=file_len,
                         max_rows=max_rows,
                     )
                     ss.scan()
@@ -255,13 +254,16 @@ def create_import_sqlite(
             logger.debug("create_import_sqlite: sqlite3 .quit/flush/close")
             proc.stdin.write(b".quit\n")
             try:
+                # These should've automatically closed when Sqlite3 exited,
+                # doing them within a try/except just in case
                 proc.stdin.flush()
                 proc.stdin.close()
             except BrokenPipeError:
                 pass
             finally:
                 proc.wait()
-            logger.debug("create_import_sqlite: sqlite3 .quit/flush/close done")
+                logger.debug(
+                    "create_import_sqlite: sqlite3 .quit/flush/close done")
 
         if fifo_fname:
             logger.debug("create_import_sqlite: rm fifo_fname %s", fifo_fname)

@@ -26,7 +26,7 @@ class EquivalencyCases(TestCase):
 
         count_files2 = partial(count_files, db_path=None)
         test()
-        self.assertEqual(file_count, len(sources))
+        self.assertEqual(file_count, len(csv_sources))
 
     def test_that_zipped_csvs_have_expected_structure(self):
 
